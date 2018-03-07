@@ -20,6 +20,7 @@ import (
 	"strconv"
 	// "reflect"
 	// "path/filepath"
+	"errors"
 	"flag"
 	"golang.org/x/net/proxy"
 	"regexp"
@@ -60,15 +61,6 @@ type Response struct {
 }
 
 type Json map[string]interface{}
-
-type myError struct {
-	val1 int
-	err  string
-}
-
-func (this myError) Error() string {
-	return fmt.Sprintf("%d:%s\n", this.val1, this.err)
-}
 
 const COOKIE_FILE = "./data/cookie.json"
 const AGENT_DB = "./data/agent.db"
@@ -127,34 +119,34 @@ func New(mintime int) (ingress *Ingress, err error) {
 func (I *Ingress) GetConf() (conf *Config.Options, err error) {
 	conf, err = Config.New(CONF_FILE)
 	if err != nil {
-		return conf, myError{1, "Load Config Error"}
+		return conf, errors.New("Load Config Error")
 	}
 	if !conf.Has("UA") {
-		return conf, myError{1, "undefined index UA or value is not string or value is empty"}
+		return conf, errors.New("undefined index UA or value is not string or value is empty")
 	}
 	if !conf.Has("email") {
-		return conf, myError{1, "undefined index email or value is not string or value is empty"}
+		return conf, errors.New("undefined index email or value is not string or value is empty")
 	}
 	if !conf.Has("password") {
-		return conf, myError{1, "undefined index password or value is not string or value is empty"}
+		return conf, errors.New("undefined index password or value is not string or value is empty")
 	}
 	if !conf.Has("minLatE6") {
-		return conf, myError{1, "undefined index minLatE6 or value is not int|string or value is empty"}
+		return conf, errors.New("undefined index minLatE6 or value is not int|string or value is empty")
 	}
 	if !conf.Has("minLngE6") {
-		return conf, myError{1, "undefined index minLngE6 or value is not int|string or value is empty"}
+		return conf, errors.New("undefined index minLngE6 or value is not int|string or value is empty")
 	}
 	if !conf.Has("maxLatE6") {
-		return conf, myError{1, "undefined index maxLatE6 or value is not int|string or value is empty"}
+		return conf, errors.New("undefined index maxLatE6 or value is not int|string or value is empty")
 	}
 	if !conf.Has("maxLngE6") {
-		return conf, myError{1, "undefined index maxLngE6 or value is not int|string or value is empty"}
+		return conf, errors.New("undefined index maxLngE6 or value is not int|string or value is empty")
 	}
 	if !conf.Has("latE6") {
-		return conf, myError{1, "undefined index latE6 or value is not int|string or value is empty"}
+		return conf, errors.New("undefined index latE6 or value is not int|string or value is empty")
 	}
 	if !conf.Has("lngE6") {
-		return conf, myError{1, "undefined index lngE6 or value is not int|string or value is empty"}
+		return conf, errors.New("undefined index lngE6 or value is not int|string or value is empty")
 	}
 	return conf, nil
 }
@@ -230,7 +222,7 @@ func (I *Ingress) __get_token() (s string, err error) {
 			return reg[1], err
 		}
 	}
-	return s, myError{1, "Failed to get token"}
+	return s, errors.New("Failed to get token")
 }
 
 // 获取v
@@ -260,11 +252,11 @@ func (I *Ingress) __get_v() (r string, err error) {
 		return r, err
 	}
 	if response.StatusCode != 200 {
-		return r, myError{1, "Request Error"}
+		return r, errors.New("Request Error")
 	}
 	if reg := regexp.MustCompile("(?sim:<a\\shref=\"(?P<URL>.*?)\"\\s.*?>Sign\\sin</a>)").FindAllSubmatch(response.Body, -1); len(reg) > 0 && len(reg[0]) == 2 && len(reg[0][1]) > 0 {
 		if !I.__login(string(reg[0][1])) {
-			return r, myError{1, "Auto Login error"}
+			return r, errors.New("Auto Login error")
 		}
 		response, err = I.Request(&Options{
 			Method: "GET",
@@ -274,13 +266,13 @@ func (I *Ingress) __get_v() (r string, err error) {
 			return r, err
 		}
 		if response.StatusCode != 200 {
-			return r, myError{1, "Request Error"}
+			return r, errors.New("Request Error")
 		}
 	}
 	if v := regexp.MustCompile("(?sim:<script\\stype=\"text/javascript\"\\ssrc=\"/jsc/gen_dashboard_(\\w+)\\.js\"></script>)").FindAllSubmatch(response.Body, -1); len(v) > 0 && len(v[0]) == 2 && len(v[0][1]) > 0 {
 		return string(v[0][1]), err
 	}
-	return r, myError{1, "Failed to get V"}
+	return r, errors.New("Failed to get V")
 }
 
 func (I *Ingress) __check_islogin(body []byte) bool {
