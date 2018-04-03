@@ -44,20 +44,15 @@ type Options struct {
 	Body   io.Reader
 }
 
-type Response struct {
-	Status           string // e.g. "200 OK"
-	StatusCode       int    // e.g. 200
-	Proto            string // e.g. "HTTP/1.0"
-	ProtoMajor       int    // e.g. 1
-	ProtoMinor       int    // e.g. 0
-	Header           http.Header
-	Body             []byte
-	ContentLength    int64
-	TransferEncoding []string
-	Close            bool
-	Uncompressed     bool
-	Trailer          http.Header
-	Request          *http.Request
+func extractBody(r io.Reader) ([]byte, io.ReadCloser, error) {
+	buf := new(bytes.Buffer)
+	_, err := buf.ReadFrom(r)
+	return buf.Bytes(), ioutil.NopCloser(buf), err
+}
+
+type HttpResponse struct {
+	*http.Response
+	BodyBytes []byte
 }
 
 type Json map[string]interface{}
@@ -74,19 +69,19 @@ func New(mintime int) (ingress *Ingress, err error) {
 	fmt.Println("Open Sqlite")
 	ingress.Sqlite3, err = sql.Open("sqlite3", AGENT_DB)
 	if err != nil {
-		return ingress, err
+		return nil, err
 	}
 	fmt.Println("Initialized Cookiejar")
 	ingress.Cookie, err = cookiejar.New(&cookiejar.Options{Filename: COOKIE_FILE, NoPersist: false, IgnoreDiscard: true, IgnoreExpires: true})
 	if err != nil {
-		return ingress, err
+		return nil, err
 	}
 	fmt.Println(fmt.Sprintf("%s %d\n", "Set msg time", mintime))
 	ingress.Mintime = mintime
 	fmt.Println("Get Config")
 	ingress.Config, err = ingress.GetConf()
 	if err != nil {
-		return ingress, err
+		return nil, err
 	}
 	fmt.Println("Set Proxy")
 	ingress.Proxy = ingress.Config.Get("proxy").(string)
@@ -104,13 +99,13 @@ func New(mintime int) (ingress *Ingress, err error) {
 	fmt.Println("Set V")
 	v, err = ingress.__get_user_v()
 	if err != nil {
-		return ingress, err
+		return nil, err
 	}
 	ingress.Config.Set("v", v)
 	fmt.Println("Set Token")
 	ingress.Header["X-CSRFToken"], err = ingress.__get_token()
 	if err != nil {
-		return ingress, err
+		return nil, err
 	}
 	fmt.Println("Initialized successfully")
 	return ingress, err
@@ -119,60 +114,54 @@ func New(mintime int) (ingress *Ingress, err error) {
 func (I *Ingress) GetConf() (conf *Config.Options, err error) {
 	conf, err = Config.New(CONF_FILE)
 	if err != nil {
-		return conf, errors.New("Load Config Error")
+		return nil, errors.New("Load Config Error")
 	}
 	if !conf.Has("UA") {
-		return conf, errors.New("undefined index UA or value is not string or value is empty")
+		return nil, errors.New("undefined index UA or value is not string or value is empty")
 	}
 	if !conf.Has("email") {
-		return conf, errors.New("undefined index email or value is not string or value is empty")
+		return nil, errors.New("undefined index email or value is not string or value is empty")
 	}
 	if !conf.Has("password") {
-		return conf, errors.New("undefined index password or value is not string or value is empty")
+		return nil, errors.New("undefined index password or value is not string or value is empty")
 	}
 	if !conf.Has("minLatE6") {
-		return conf, errors.New("undefined index minLatE6 or value is not int|string or value is empty")
+		return nil, errors.New("undefined index minLatE6 or value is not int|string or value is empty")
 	}
 	if !conf.Has("minLngE6") {
-		return conf, errors.New("undefined index minLngE6 or value is not int|string or value is empty")
+		return nil, errors.New("undefined index minLngE6 or value is not int|string or value is empty")
 	}
 	if !conf.Has("maxLatE6") {
-		return conf, errors.New("undefined index maxLatE6 or value is not int|string or value is empty")
+		return nil, errors.New("undefined index maxLatE6 or value is not int|string or value is empty")
 	}
 	if !conf.Has("maxLngE6") {
-		return conf, errors.New("undefined index maxLngE6 or value is not int|string or value is empty")
+		return nil, errors.New("undefined index maxLngE6 or value is not int|string or value is empty")
 	}
 	if !conf.Has("latE6") {
-		return conf, errors.New("undefined index latE6 or value is not int|string or value is empty")
+		return nil, errors.New("undefined index latE6 or value is not int|string or value is empty")
 	}
 	if !conf.Has("lngE6") {
-		return conf, errors.New("undefined index lngE6 or value is not int|string or value is empty")
+		return nil, errors.New("undefined index lngE6 or value is not int|string or value is empty")
 	}
 	return conf, nil
 }
 
 // 二次封装的请求方法
-func (I *Ingress) Request(options *Options) (res Response, err error) {
-	var (
-		body      []byte         //相应内容
-		response  *http.Response //相应内容
-		request   *http.Request  // 请求头
-		noOptions Options
-	)
+func (I *Ingress) Request(options *Options) (res *HttpResponse, err error) {
 	if options == nil {
-		options = &noOptions
+		options = &Options{}
 	}
 	client := &http.Client{Jar: I.Cookie}
 	if I.Proxy != "" {
 		dialer, err := proxy.SOCKS5("tcp", I.Proxy, nil, proxy.Direct)
 		if err != nil {
-			return res, err
+			return nil, err
 		}
 		client.Transport = &http.Transport{Dial: dialer.Dial}
 	}
-	request, err = http.NewRequest(strings.ToUpper(options.Method), options.Url, options.Body)
+	request, err := http.NewRequest(strings.ToUpper(options.Method), options.Url, options.Body)
 	if err != nil {
-		return res, err
+		return nil, err
 	}
 	for key, value := range I.Header {
 		request.Header.Set(key, value)
@@ -183,37 +172,30 @@ func (I *Ingress) Request(options *Options) (res Response, err error) {
 	if _, ok := request.Header["Content-Type"]; options.Body != nil && !ok {
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
 	}
-	response, err = client.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
-		return res, err
+		return nil, err
 	}
 	defer response.Body.Close()
 	if err = I.Cookie.Save(); err != nil {
-		return res, err
+		return nil, err
 	}
-	// 解压gzio
-	if _, ok := response.Header["Content-Encoding"]; ok && response.Header.Get("Content-Encoding") == "gzip" {
-		response.Body, err = gzip.NewReader(response.Body)
+	res = &HttpResponse{Response: response}
+	// apparently, Body can be nil in some cases
+	if response.Body != nil {
+		// 解压gzio
+		if _, ok := response.Header["Content-Encoding"]; ok && response.Header.Get("Content-Encoding") == "gzip" {
+			response.Body, err = gzip.NewReader(response.Body)
+			if err != nil {
+				return nil, err
+			}
+		}
+		res.BodyBytes, res.Body, err = extractBody(response.Body)
 		if err != nil {
-			return res, err
+			errors.New("Failed to extract response body")
 		}
 	}
-	body, err = ioutil.ReadAll(response.Body)
-	return Response{
-		Status:           response.Status,
-		StatusCode:       response.StatusCode,
-		Proto:            response.Proto,
-		ProtoMajor:       response.ProtoMajor,
-		ProtoMinor:       response.ProtoMinor,
-		Header:           response.Header,
-		Body:             body,
-		ContentLength:    response.ContentLength,
-		TransferEncoding: response.TransferEncoding,
-		Close:            response.Close,
-		Uncompressed:     response.Uncompressed,
-		Trailer:          response.Trailer,
-		Request:          response.Request,
-	}, err
+	return res, nil
 }
 
 func (I *Ingress) __get_token() (s string, err error) {
@@ -254,9 +236,9 @@ func (I *Ingress) __get_v() (r string, err error) {
 	if response.StatusCode != 200 {
 		return r, errors.New("Request Error")
 	}
-	if reg := regexp.MustCompile("(?sim:<a\\shref=\"(?P<URL>.*?)\"\\s.*?>Sign\\sin</a>)").FindAllSubmatch(response.Body, -1); len(reg) > 0 && len(reg[0]) == 2 && len(reg[0][1]) > 0 {
+	if reg := regexp.MustCompile("(?sim:<a\\shref=\"(?P<URL>.*?)\"\\s.*?>Sign\\sin</a>)").FindAllSubmatch(response.BodyBytes, -1); len(reg) > 0 && len(reg[0]) == 2 && len(reg[0][1]) > 0 {
 		if !I.__login(string(reg[0][1])) {
-			return r, errors.New("Auto Login error")
+			return r, errors.New("Auto Login error,If you are running this program for the first time, try to run it again.")
 		}
 		response, err = I.Request(&Options{
 			Method: "GET",
@@ -269,7 +251,7 @@ func (I *Ingress) __get_v() (r string, err error) {
 			return r, errors.New("Request Error")
 		}
 	}
-	if v := regexp.MustCompile("(?sim:<script\\stype=\"text/javascript\"\\ssrc=\"/jsc/gen_dashboard_(\\w+)\\.js\"></script>)").FindAllSubmatch(response.Body, -1); len(v) > 0 && len(v[0]) == 2 && len(v[0][1]) > 0 {
+	if v := regexp.MustCompile("(?sim:<script\\stype=\"text/javascript\"\\ssrc=\"/jsc/gen_dashboard_(\\w+)\\.js\"></script>)").FindAllSubmatch(response.BodyBytes, -1); len(v) > 0 && len(v[0]) == 2 && len(v[0][1]) > 0 {
 		return string(v[0][1]), err
 	}
 	return r, errors.New("Failed to get V")
@@ -286,7 +268,7 @@ func (I *Ingress) __chaeck_refresh(body []byte) (string, bool) {
 	return "", false
 }
 
-func (I *Ingress) __refresh(_url, _referer string) (Response, bool) {
+func (I *Ingress) __refresh(_url, _referer string) (*HttpResponse, bool) {
 	response, err := I.Request(&Options{
 		Method: "GET",
 		Url:    _url,
@@ -298,7 +280,7 @@ func (I *Ingress) __refresh(_url, _referer string) (Response, bool) {
 	if err != nil || response.StatusCode != 200 {
 		return response, false
 	}
-	if _u, ok := I.__chaeck_refresh(response.Body); ok {
+	if _u, ok := I.__chaeck_refresh(response.BodyBytes); ok {
 		return I.__refresh(_u, _url)
 	}
 	return response, true
@@ -313,10 +295,10 @@ func (I *Ingress) __login(_url string) bool {
 	if err != nil || response.StatusCode != 200 {
 		return false
 	}
-	if I.__check_islogin(response.Body) {
+	if I.__check_islogin(response.BodyBytes) {
 		return true
 	}
-	if _u, ok := I.__chaeck_refresh(response.Body); ok {
+	if _u, ok := I.__chaeck_refresh(response.BodyBytes); ok {
 		if response, ok = I.__refresh(_u, _url); !ok {
 			return false
 		}
@@ -324,7 +306,7 @@ func (I *Ingress) __login(_url string) bool {
 	if err != nil || response.StatusCode != 200 {
 		return false
 	}
-	document, err := goquery.NewDocumentFromReader(bytes.NewBuffer(response.Body))
+	document, err := goquery.NewDocumentFromReader(bytes.NewBuffer(response.BodyBytes))
 	if err != nil {
 		return false
 	}
@@ -357,7 +339,7 @@ func (I *Ingress) __login(_url string) bool {
 		return false
 	}
 
-	document, err = goquery.NewDocumentFromReader(bytes.NewBuffer(post_response.Body))
+	document, err = goquery.NewDocumentFromReader(bytes.NewBuffer(post_response.BodyBytes))
 	if err != nil {
 		return false
 	}
@@ -389,9 +371,7 @@ func (I *Ingress) __login(_url string) bool {
 	if err != nil || login_page_response.StatusCode != 200 {
 		return false
 	}
-	if I.__check_islogin(login_page_response.Body) {
-		return true
-	}
+	fmt.Println("The first time you log in to the google account, you need to restart the program.")
 	return false
 }
 
@@ -485,7 +465,7 @@ func (I *Ingress) get_msg() (_json Json, err error) {
 	if err != nil {
 		return _json, err
 	}
-	if err := json.Unmarshal(response.Body, &_json); err != nil {
+	if err := json.Unmarshal(response.BodyBytes, &_json); err != nil {
 		return _json, err
 	}
 	return _json, nil
@@ -515,7 +495,7 @@ func (I *Ingress) send_msg(msg string) (_json Json, err error) {
 	if err != nil {
 		return _json, err
 	}
-	if err := json.Unmarshal(response.Body, &_json); err != nil {
+	if err := json.Unmarshal(response.BodyBytes, &_json); err != nil {
 		return _json, err
 	}
 	return _json, nil
