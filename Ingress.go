@@ -103,7 +103,7 @@ func New(mintime int) (ingress *Ingress, err error) {
 	}
 	ingress.Config.Set("v", v)
 	fmt.Println("Set Token")
-	ingress.Header["X-CSRFToken"], err = ingress.__get_token()
+	ingress.Header["X-CsrfToken"], err = ingress.__get_token()
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +228,7 @@ func (I *Ingress) __get_v() (r string, err error) {
 
 	response, err := I.Request(&Options{
 		Method: "GET",
-		Url:    "https://www.ingress.com/intel",
+		Url:    "https://intel.ingress.com/intel",
 	})
 	if err != nil {
 		return r, err
@@ -236,13 +236,13 @@ func (I *Ingress) __get_v() (r string, err error) {
 	if response.StatusCode != 200 {
 		return r, errors.New("Request Error")
 	}
-	if reg := regexp.MustCompile("(?sim:<a\\shref=\"(?P<URL>.*?)\"\\s.*?>Sign\\sin</a>)").FindAllSubmatch(response.BodyBytes, -1); len(reg) > 0 && len(reg[0]) == 2 && len(reg[0][1]) > 0 {
-		if !I.__login(string(reg[0][1])) {
+	if reg := regexp.MustCompile("(?sim:<a\\shref=\"(?P<URL>.*?)\"\\s.*?>Sign\\sin</a>)").FindSubmatch(response.BodyBytes); len(reg) == 2 {
+		if !I.__login(string(reg[1])) {
 			return r, errors.New("Auto Login error,If you are running this program for the first time, try to run it again.")
 		}
 		response, err = I.Request(&Options{
 			Method: "GET",
-			Url:    "https://www.ingress.com/intel",
+			Url:    "https://intel.ingress.com/intel",
 		})
 		if err != nil {
 			return r, err
@@ -251,8 +251,8 @@ func (I *Ingress) __get_v() (r string, err error) {
 			return r, errors.New("Request Error")
 		}
 	}
-	if v := regexp.MustCompile("(?sim:<script\\stype=\"text/javascript\"\\ssrc=\"/jsc/gen_dashboard_(\\w+)\\.js\"></script>)").FindAllSubmatch(response.BodyBytes, -1); len(v) > 0 && len(v[0]) == 2 && len(v[0][1]) > 0 {
-		return string(v[0][1]), err
+	if v := regexp.MustCompile("(?sim:<script\\stype=\"text/javascript\"\\ssrc=\"/jsc/gen_dashboard_(\\w+)\\.js\"></script>)").FindSubmatch(response.BodyBytes); len(v) == 2 {
+		return string(v[1]), err
 	}
 	return r, errors.New("Failed to get V")
 }
@@ -262,8 +262,8 @@ func (I *Ingress) __check_islogin(body []byte) bool {
 }
 
 func (I *Ingress) __chaeck_refresh(body []byte) (string, bool) {
-	if reg := regexp.MustCompile("(?sim:<meta\\s+http-equiv=\"refresh\"\\s+content=\"\\d+;\\s+url=(.*?)\">)").FindAllSubmatch(body, -1); len(reg) == 2 && len(reg[0]) == 2 {
-		return strings.Replace(string(reg[0][1]), "&amp;", "&", -1), true
+	if reg := regexp.MustCompile("(?sim:<meta\\s+http-equiv=\"refresh\"\\s+content=\"\\d+;\\s+url=(.*?)\">)").FindSubmatch(body); len(reg) == 2 {
+		return strings.Replace(string(reg[1]), "&amp;", "&", -1), true
 	}
 	return "", false
 }
@@ -383,11 +383,11 @@ func (I *Ingress) __diff_date(date int64) int64 {
 
 func (I *Ingress) __check_new_agent(msg string) (string, bool) {
 	var newAgent string
-	if reg := regexp.MustCompile("\\[secure\\]\\s+(\\w+):\\s+has\\scompleted\\straining\\.").FindAllStringSubmatch(msg, -1); len(reg) == 1 && len(reg[0]) == 2 {
-		newAgent = reg[0][1]
-	} else if reg := regexp.MustCompile("(?sim:\\[secure\\]\\s(\\w+):\\s+.*)").FindAllStringSubmatch(msg, -1); len(reg) == 1 && len(reg[0]) == 2 {
+	if reg := regexp.MustCompile("\\[secure\\]\\s+(\\w+):\\s+has\\scompleted\\straining\\.").FindStringSubmatch(msg); len(reg) == 2 {
+		newAgent = reg[1]
+	} else if reg := regexp.MustCompile("(?sim:\\[secure\\]\\s(\\w+):\\s+.*)").FindStringSubmatch(msg); len(reg) == 2 {
 		if regexp.MustCompile(I.__regexp()).MatchString(msg) {
-			newAgent = reg[0][1]
+			newAgent = reg[1]
 		}
 	}
 	if newAgent != "" {
@@ -454,11 +454,11 @@ func (I *Ingress) get_msg() (_json Json, err error) {
 	}
 	response, err := I.Request(&Options{
 		Method: "POST",
-		Url:    "https://www.ingress.com/r/getPlexts",
+		Url:    "https://intel.ingress.com/r/getPlexts",
 		Header: map[string]string{
 			"Content-type": "application/json; charset=UTF-8",
-			"Origin":       "https://www.ingress.com",
-			"Referer":      "https://www.ingress.com/intel",
+			"Origin":       "https://intel.ingress.com",
+			"Referer":      "https://intel.ingress.com/intel",
 		},
 		Body: bytes.NewReader(Data),
 	})
@@ -484,11 +484,11 @@ func (I *Ingress) send_msg(msg string) (_json Json, err error) {
 	}
 	response, err := I.Request(&Options{
 		Method: "POST",
-		Url:    "https://www.ingress.com/r/sendPlext",
+		Url:    "https://intel.ingress.com/r/sendPlext",
 		Header: map[string]string{
 			"Content-type": "application/json; charset=UTF-8",
-			"Origin":       "https://www.ingress.com",
-			"Referer":      "https://www.ingress.com/intel",
+			"Origin":       "https://intel.ingress.com",
+			"Referer":      "https://intel.ingress.com/intel",
 		},
 		Body: bytes.NewReader(Data),
 	})
