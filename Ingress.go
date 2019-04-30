@@ -3,9 +3,9 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"github.com/PuerkitoBio/goquery"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/zishang520/persistent-cookiejar"
@@ -13,6 +13,7 @@ import (
 	"io/ioutil"
 	"lib/Config"
 	"lib/Set"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -22,6 +23,10 @@ import (
 	// "path/filepath"
 	"errors"
 	"flag"
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/dom"
+	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/chromedp"
 	"golang.org/x/net/proxy"
 	"regexp"
 	"strings"
@@ -64,50 +69,50 @@ const TMP_FILE = "./data/tmp.json"
 
 func New(mintime int) (ingress *Ingress, err error) {
 	var v string
-	fmt.Println("Initialized...")
+	log.Println("Initialized...")
 	ingress = &Ingress{}
-	fmt.Println("Open Sqlite")
+	log.Println("Open Sqlite")
 	ingress.Sqlite3, err = sql.Open("sqlite3", AGENT_DB)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("Initialized Cookiejar")
+	log.Println("Initialized Cookiejar")
 	ingress.Cookie, err = cookiejar.New(&cookiejar.Options{Filename: COOKIE_FILE, NoPersist: false, IgnoreDiscard: true, IgnoreExpires: true})
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println(fmt.Sprintf("%s %d\n", "Set msg time", mintime))
+	log.Printf("%s %d\n", "Set msg time", mintime)
 	ingress.Mintime = mintime
-	fmt.Println("Get Config")
+	log.Println("Get Config")
 	ingress.Config, err = ingress.GetConf()
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("Set Proxy")
+	log.Println("Set Proxy")
 	ingress.Proxy = ingress.Config.Get("proxy").(string)
-	fmt.Println("Initialized Default Header")
+	log.Println("Initialized Default Header")
 	ingress.Header = map[string]string{
 		"Cache-Control":             "no-cache, no-store",
 		"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
 		"Accept-Encoding":           "gzip",
-		"Accept-Language":           "zh-CN,zh;q=0.8",
+		"Accept-Language":           "zh-CN,zh;q=0.9",
 		"Connection":                "keep-alive",
 		"Upgrade-Insecure-Requests": "1",
-		"Dnt":        "1",
-		"User-Agent": ingress.Config.Get("UA").(string),
+		"Dnt":                       "1",
+		"User-Agent":                ingress.Config.Get("UA").(string),
 	}
-	fmt.Println("Set V")
+	log.Println("Set V")
 	v, err = ingress.__get_user_v()
 	if err != nil {
 		return nil, err
 	}
 	ingress.Config.Set("v", v)
-	fmt.Println("Set Token")
+	log.Println("Set Token")
 	ingress.Header["X-CsrfToken"], err = ingress.__get_token()
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("Initialized successfully")
+	log.Println("Initialized successfully")
 	return ingress, err
 }
 
@@ -209,7 +214,7 @@ func (I *Ingress) __get_token() (s string, err error) {
 
 // 获取v
 func (I *Ingress) __get_user_v() (v string, err error) {
-	conf, err := Config.New(TMP_FILE)
+	conf, _ := Config.New(TMP_FILE)
 	if conf.Has("time") && I.__diff_date(int64(conf.Get("time").(float64))) >= 0 {
 		return conf.Get("v").(string), err
 	} else {
@@ -225,7 +230,6 @@ func (I *Ingress) __get_user_v() (v string, err error) {
 }
 
 func (I *Ingress) __get_v() (r string, err error) {
-
 	response, err := I.Request(&Options{
 		Method: "GET",
 		Url:    "https://intel.ingress.com/intel",
@@ -236,10 +240,20 @@ func (I *Ingress) __get_v() (r string, err error) {
 	if response.StatusCode != 200 {
 		return r, errors.New("Request Error")
 	}
-	if reg := regexp.MustCompile("(?sim:<a\\shref=\"(?P<URL>.*?)\"\\s.*?>Sign\\sin</a>)").FindSubmatch(response.BodyBytes); len(reg) == 2 {
-		if !I.__login(string(reg[1])) {
-			return r, errors.New("Auto Login error,If you are running this program for the first time, try to run it again.")
+	if reg := regexp.MustCompile("(?sim:<a\\shref=\"(?P<URL>.*?)\"\\s.*?>Sign\\s.+</a>)").FindSubmatch(response.BodyBytes); len(reg) == 2 {
+		switch I.Config.Get("login_type").(string) {
+		case "0":
+			if !I.__login(string(reg[1])) {
+				return r, errors.New("Auto Login error,If you are running this program for the first time, try to run it again.")
+			}
+			break
+		case "1":
+			if !I.__chromedp_login() {
+				return r, errors.New("Auto Login error,If you are running this program for the first time, try to run it again.")
+			}
+			break
 		}
+
 		response, err = I.Request(&Options{
 			Method: "GET",
 			Url:    "https://intel.ingress.com/intel",
@@ -286,8 +300,324 @@ func (I *Ingress) __refresh(_url, _referer string) (*HttpResponse, bool) {
 	return response, true
 }
 
+func (I *Ingress) __chromedp_login() bool {
+	_email := I.Config.Get("email").(string)
+	_password := I.Config.Get("password").(string)
+	_proxy := I.Config.Get("proxy").(string)
+	_path := I.Config.Get("chrome_path").(string)
+	_agent := I.Config.Get("UA").(string)
+
+	dir, err := ioutil.TempDir("", "chromedp-ingress")
+	if err != nil {
+		return false
+		// log.Fatalln(err)
+	}
+	defer os.RemoveAll(dir)
+
+	opts := []chromedp.ExecAllocatorOption{
+		chromedp.NoFirstRun,
+		chromedp.NoDefaultBrowserCheck,
+		chromedp.Headless,
+		chromedp.DisableGPU,
+		chromedp.UserDataDir(dir),
+		chromedp.WindowSize(1200, 780),
+		chromedp.UserAgent(_agent),
+	}
+	if _proxy != "" {
+		opts = append(opts, chromedp.ProxyServer(_proxy))
+	}
+
+	if _path != "" {
+		opts = append(opts, chromedp.ExecPath(_path))
+	}
+
+	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancel()
+
+	// also set up a custom logger
+	ctx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
+	defer cancel()
+
+	log.Println("Load the Ingress Intel page...")
+	if err := chromedp.Run(ctx, chromedp.Tasks{
+		network.Enable(),
+		network.SetExtraHTTPHeaders(network.Headers(map[string]interface{}{
+			"Accept-Language": "zh-CN,zh;q=0.9",
+		})),
+		chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+			for _, cookie := range I.Cookie.AllCookies() {
+				value, err := url.QueryUnescape(cookie.Value)
+				if err != nil {
+					return err
+				}
+				expr := cdp.TimeSinceEpoch(cookie.Expires)
+				success, err := network.SetCookie(cookie.Name, value).
+					WithDomain(cookie.Domain).
+					WithPath(cookie.Path).
+					WithSecure(cookie.Secure).
+					WithHTTPOnly(cookie.HttpOnly).
+					WithExpires(&expr).
+					Do(ctxt, h)
+				if err != nil {
+					return err
+				}
+				if !success {
+					return errors.New("could not set cookie")
+				}
+			}
+			return nil
+		}),
+		chromedp.Navigate(`https://intel.ingress.com`),
+	}); err != nil {
+		// if err == context.Canceled {
+		// 	return false
+		// }
+		return false
+		// log.Fatalln(err)
+	}
+
+	log.Println("Determine if you need to log in...")
+	var Login chan bool
+	var isLogin chan bool
+	var Status chan bool
+	Login = make(chan bool)
+	isLogin = make(chan bool)
+	Status = make(chan bool)
+
+	go func() {
+		var nodeIDs []cdp.NodeID
+		if err := chromedp.Run(ctx, chromedp.Tasks{
+			chromedp.WaitReady(`body`, chromedp.ByQuery),         // 等待HTML加载完成
+			chromedp.NodeIDs("body", &nodeIDs, chromedp.ByQuery), // 获取Body的NodeId
+			chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+				if len(nodeIDs) != 1 {
+					return errors.New("Document loading error")
+				}
+				// 查询节点
+				NodeID, err := dom.QuerySelector(nodeIDs[0], `#header_login_info`).Do(ctxt, h)
+				if err != nil {
+					return err
+				}
+				// 已经登录或者其它问题改ID为0
+				if NodeID == 0 {
+					// 需要登录
+					if err := chromedp.Run(ctxt, chromedp.Tasks{
+						chromedp.WaitReady(`//*[@id="dashboard_container"]/div[1]/a[starts-with(., 'Sign')]`), // 等待是否需要登录 30s 超时
+						chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+							log.Println("Going to the login page...")
+							// close(isLogin)
+							Login <- true
+							return nil
+						}),
+					}); err != nil {
+						return err
+					}
+				}
+				return nil
+			}),
+		}); err != nil {
+			// if err == context.Canceled {
+			// 	return
+			// }
+			Status <- false
+			return
+			// log.Fatalln(err)
+		}
+	}()
+	// 已经登录监听
+	go func() {
+		if err := chromedp.Run(ctx, chromedp.Tasks{
+			chromedp.WaitReady(`body`, chromedp.ByQuery),       // 等待HTML加载完成
+			chromedp.WaitReady(`//*[@id="header_login_info"]`), // 等待是否需要登录 30s 超时
+			chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+				// 能执行道这里说明不需要登录
+				log.Println("The login status is successfully obtained, loading data...")
+				close(Login)
+				isLogin <- true
+				return nil
+			}),
+		}); err != nil {
+			// if err == context.Canceled {
+			// 	return
+			// }
+			Status <- false
+			return
+			// log.Fatalln(err)
+		}
+	}()
+	// 登录成功
+	go func() {
+		// 关闭通道
+		if x, ok := <-isLogin; !ok || !x {
+			log.Println("Interrupt listening for logged in events...")
+			return
+		}
+		var name string
+		if err := chromedp.Run(ctx, chromedp.Tasks{
+			chromedp.Text(`#player_stats > div.RESISTANCE > div.player_nickname`, &name, chromedp.ByQuery, chromedp.NodeVisible), // 等待是否需要登录 30s 超时
+			// chromedp.Text(`//*[@id="header_email"]`, &name, chromedp.NodeVisible), // 等待是否需要登录 30s 超时
+		}); err != nil {
+			// if err == context.Canceled {
+			// 	return
+			// }
+			Status <- false
+			return
+			// log.Fatalln(err)
+		}
+		log.Printf("Welcome: %s", name)
+		if err := chromedp.Run(ctx, chromedp.Tasks{
+			chromedp.WaitReady(`body`, chromedp.ByQuery), // 等待HTML加载完成
+			chromedp.WaitReady(`//*[@id="message"]`),     // 等待输入框加载完成
+			chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+				close(isLogin)
+				cookies, err := network.GetAllCookies().Do(ctxt, h)
+				if err != nil {
+					return err
+				}
+				for _, cookie := range cookies {
+					// log.Printf("cookie %+v", cookie)
+					I.Cookie.SetCookies(&url.URL{Host: cookie.Domain, Scheme: func() string {
+						if cookie.Secure {
+							return "https"
+						}
+						return "http"
+					}()}, []*http.Cookie{{Name: cookie.Name, Value: url.QueryEscape(cookie.Value), Path: cookie.Path, Domain: cookie.Domain, Expires: time.Unix(func() int64 {
+						if i := int64(cookie.Expires); i > int64(0) {
+							return i
+						}
+						return int64(0)
+					}(), int64(0)), Secure: cookie.Secure, HttpOnly: cookie.HTTPOnly}})
+				}
+				// 保存浏览器获取到的Cookie
+				if err := I.Cookie.Save(); err != nil {
+					return err
+				}
+				Status <- true
+				return nil
+			}),
+			chromedp.Stop(), // 中断所有任务
+		}); err != nil {
+			// if err == context.Canceled {
+			// 	return
+			// }
+			Status <- false
+			return
+			// log.Fatal(err)
+		}
+		log.Println("Chromedp completes signing in")
+	}()
+	// 登录流程
+	go func() {
+		// 关闭通道
+		if x, ok := <-Login; !ok || !x {
+			log.Println("Interrupt the Google login process...")
+			return
+		}
+		var nodeIDs []cdp.NodeID
+		// 跳到登录页面
+		if err := chromedp.Run(ctx, chromedp.Tasks{
+			chromedp.WaitReady(`body`, chromedp.ByQuery), // 等待HTML加载完成
+			chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),
+			// chromedp.WaitVisible(`//*[@id="dashboard_container"]/div[1]/a[starts-with(., 'Sign')]`),
+			chromedp.Click(`//*[@id="dashboard_container"]/div[1]/a[starts-with(., 'Sign')]`, chromedp.NodeVisible),
+			chromedp.WaitNotPresent(`//*[@id="dashboard_container"]/div[1]/a[starts-with(., 'Sign')]`),
+			chromedp.WaitReady(`body`, chromedp.ByQuery),         // 等待HTML加载完成
+			chromedp.NodeIDs("body", &nodeIDs, chromedp.ByQuery), // 获取Body的NodeId
+			chromedp.Sleep(time.Duration(10) * time.Second),
+			chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+				if len(nodeIDs) != 1 {
+					return errors.New("Document loading error")
+				}
+				// 查询节点
+				passwordId, err := dom.QuerySelector(nodeIDs[0], `#profileIdentifier`).Do(ctxt, h)
+				if err != nil {
+					return err
+				}
+				// 已经登录或者其它问题改ID为0
+				if passwordId > 0 {
+					// 需要登录
+					if err := chromedp.Run(ctxt, chromedp.Tasks{
+						chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+							log.Println("Entering password...")
+							return nil
+						}),
+						chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),                               // 随机延时
+						chromedp.WaitVisible(`#password input`, chromedp.ByQuery),                               // 等待输入框可见
+						chromedp.SendKeys(`#password input`, _password, chromedp.ByQuery, chromedp.NodeVisible), // 输入密码
+						chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+							log.Println("Going to the next step, ready to log in...")
+							return nil
+						}),
+						chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),       // 随机延时
+						chromedp.WaitVisible(`//*[@id="passwordNext"]`),                 // 等待Next可见
+						chromedp.Click(`//*[@id="passwordNext"]`, chromedp.NodeVisible), // 点击下一步
+						chromedp.WaitNotPresent(`//*[@id="passwordNext"]`),
+					}); err != nil {
+						return err
+					}
+				} else {
+					// 查询节点
+					identifierId, err := dom.QuerySelector(nodeIDs[0], `#identifierId`).Do(ctxt, h)
+					if err != nil {
+						return err
+					}
+					// 已经登录或者其它问题改ID为0
+					if identifierId > 0 {
+						// 需要登录
+						if err := chromedp.Run(ctxt, chromedp.Tasks{
+							chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+								log.Println("Entering account...")
+								return nil
+							}),
+							chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),                  // 随机延时
+							chromedp.WaitVisible(`//*[@id="identifierId"]`),                            // 等待输入框可见
+							chromedp.SendKeys(`//*[@id="identifierId"]`, _email, chromedp.NodeVisible), // 输入账户
+							chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+								log.Println("Going to the next step, ready to enter your password...")
+								return nil
+							}),
+							chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),         // 随机延时
+							chromedp.WaitVisible(`//*[@id="identifierNext"]`),                 // 等待Next可见
+							chromedp.Click(`//*[@id="identifierNext"]`, chromedp.NodeVisible), // 点击下一步
+							chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),         // 随机延时
+							chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+								log.Println("Entering password...")
+								return nil
+							}),
+							chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),                               // 随机延时
+							chromedp.WaitVisible(`#password input`, chromedp.ByQuery),                               // 等待输入框可见
+							chromedp.SendKeys(`#password input`, _password, chromedp.ByQuery, chromedp.NodeVisible), // 输入密码
+							chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+								log.Println("Going to the next step, ready to log in...")
+								return nil
+							}),
+							chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),       // 随机延时
+							chromedp.WaitVisible(`//*[@id="passwordNext"]`),                 // 等待Next可见
+							chromedp.Click(`//*[@id="passwordNext"]`, chromedp.NodeVisible), // 点击下一步
+							chromedp.WaitNotPresent(`//*[@id="passwordNext"]`),
+						}); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}),
+		}); err != nil {
+			// if err == context.Canceled {
+			// 	return
+			// }
+			Status <- false
+			return
+			// log.Fatal(err)
+		}
+		log.Println("Signing in...")
+	}()
+	return <-Status
+}
+
+// 旧的登录
 func (I *Ingress) __login(_url string) bool {
-	fmt.Println("Auto Login...")
+	log.Println("Auto Login...")
 	response, err := I.Request(&Options{
 		Method: "GET",
 		Url:    _url,
@@ -371,7 +701,7 @@ func (I *Ingress) __login(_url string) bool {
 	if err != nil || login_page_response.StatusCode != 200 {
 		return false
 	}
-	fmt.Println("The first time you log in to the google account, you need to restart the program.")
+	log.Println("The first time you log in to the google account, you need to restart the program.")
 	return false
 }
 
@@ -439,15 +769,15 @@ func (I *Ingress) __rand_msg() string {
 
 func (I *Ingress) get_msg() (_json Json, err error) {
 	Data, err := json.Marshal(map[string]interface{}{
-		"minLatE6":       I.Config.Get("minLatE6").(float64),
-		"minLngE6":       I.Config.Get("minLngE6").(float64),
-		"maxLatE6":       I.Config.Get("maxLatE6").(float64),
-		"maxLngE6":       I.Config.Get("maxLngE6").(float64),
-		"minTimestampMs": (time.Now().Unix()*1000 - 60000*int64(I.Mintime)),
-		"maxTimestampMs": -1,
-		"tab":            "faction",
+		"minLatE6":                I.Config.Get("minLatE6").(float64),
+		"minLngE6":                I.Config.Get("minLngE6").(float64),
+		"maxLatE6":                I.Config.Get("maxLatE6").(float64),
+		"maxLngE6":                I.Config.Get("maxLngE6").(float64),
+		"minTimestampMs":          (time.Now().Unix()*1000 - 60000*int64(I.Mintime)),
+		"maxTimestampMs":          -1,
+		"tab":                     "faction",
 		"ascendingTimestampOrder": true,
-		"v": I.Config.Get("v").(string),
+		"v":                       I.Config.Get("v").(string),
 	})
 	if err != nil {
 		return _json, err
@@ -530,7 +860,7 @@ func (I *Ingress) auto_send_msg_new_agent() string {
 		}
 	}
 	if _new_agent.Len() == 0 {
-		return "Not New Agent"
+		return "Not a new agent"
 	}
 	agents := ""
 	values := []interface{}{}
@@ -555,17 +885,17 @@ func main() {
 	flag.Parse()
 	ingress, err := New(*_time)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		os.Exit(1)
 	}
-	fmt.Println(ingress.auto_send_msg_new_agent())
+	log.Println(ingress.auto_send_msg_new_agent())
 	limiter := time.Tick(time.Millisecond * 1000 * time.Duration(*_sleep_time))
 	for true {
 		<-limiter
 		err = ingress._reload()
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 		}
-		fmt.Println(ingress.auto_send_msg_new_agent())
+		log.Println(ingress.auto_send_msg_new_agent())
 	}
 }
