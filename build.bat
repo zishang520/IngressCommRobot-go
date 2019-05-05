@@ -40,7 +40,7 @@ go build -o bin/linux_arm64/Ingress Ingress.go
 echo ========================
 echo build windows_386/Ingress.exe
 set GOOS=windows
-set GOARCH=amd64
+set GOARCH=386
 go build -o bin/windows_386/Ingress.exe Ingress.go
 
 echo ========================
