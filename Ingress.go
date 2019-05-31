@@ -6,13 +6,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"github.com/PuerkitoBio/goquery"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/zishang520/goquery"
 	"github.com/zishang520/persistent-cookiejar"
+	"ingress/Config"
+	"ingress/Set"
 	"io"
 	"io/ioutil"
-	"lib/Config"
-	"lib/Set"
 	"log"
 	"math/rand"
 	"net/http"
@@ -344,7 +344,7 @@ func (I *Ingress) __chromedp_login() bool {
 		network.SetExtraHTTPHeaders(network.Headers(map[string]interface{}{
 			"Accept-Language": "zh-CN,zh;q=0.9",
 		})),
-		chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+		chromedp.ActionFunc(func(ctxt context.Context) error {
 			for _, cookie := range I.Cookie.AllCookies() {
 				value, err := url.QueryUnescape(cookie.Value)
 				if err != nil {
@@ -357,7 +357,7 @@ func (I *Ingress) __chromedp_login() bool {
 					WithSecure(cookie.Secure).
 					WithHTTPOnly(cookie.HttpOnly).
 					WithExpires(&expr).
-					Do(ctxt, h)
+					Do(ctxt)
 				if err != nil {
 					return err
 				}
@@ -389,12 +389,12 @@ func (I *Ingress) __chromedp_login() bool {
 		if err := chromedp.Run(ctx, chromedp.Tasks{
 			chromedp.WaitReady(`body`, chromedp.ByQuery),         // 等待HTML加载完成
 			chromedp.NodeIDs("body", &nodeIDs, chromedp.ByQuery), // 获取Body的NodeId
-			chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+			chromedp.ActionFunc(func(ctxt context.Context) error {
 				if len(nodeIDs) != 1 {
 					return errors.New("Document loading error")
 				}
 				// 查询节点
-				NodeID, err := dom.QuerySelector(nodeIDs[0], `#header_login_info`).Do(ctxt, h)
+				NodeID, err := dom.QuerySelector(nodeIDs[0], `#header_login_info`).Do(ctxt)
 				if err != nil {
 					return err
 				}
@@ -403,7 +403,7 @@ func (I *Ingress) __chromedp_login() bool {
 					// 需要登录
 					if err := chromedp.Run(ctxt, chromedp.Tasks{
 						chromedp.WaitReady(`//*[@id="dashboard_container"]/div[1]/a[starts-with(., 'Sign')]`), // 等待是否需要登录 30s 超时
-						chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+						chromedp.ActionFunc(func(ctxt context.Context) error {
 							log.Println("Going to the login page...")
 							// close(isLogin)
 							Login <- true
@@ -429,7 +429,7 @@ func (I *Ingress) __chromedp_login() bool {
 		if err := chromedp.Run(ctx, chromedp.Tasks{
 			chromedp.WaitReady(`body`, chromedp.ByQuery),       // 等待HTML加载完成
 			chromedp.WaitReady(`//*[@id="header_login_info"]`), // 等待是否需要登录 30s 超时
-			chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+			chromedp.ActionFunc(func(ctxt context.Context) error {
 				// 能执行道这里说明不需要登录
 				log.Println("The login status is successfully obtained, loading data...")
 				close(Login)
@@ -468,9 +468,9 @@ func (I *Ingress) __chromedp_login() bool {
 		if err := chromedp.Run(ctx, chromedp.Tasks{
 			chromedp.WaitReady(`body`, chromedp.ByQuery), // 等待HTML加载完成
 			chromedp.WaitReady(`//*[@id="message"]`),     // 等待输入框加载完成
-			chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+			chromedp.ActionFunc(func(ctxt context.Context) error {
 				close(isLogin)
-				cookies, err := network.GetAllCookies().Do(ctxt, h)
+				cookies, err := network.GetAllCookies().Do(ctxt)
 				if err != nil {
 					return err
 				}
@@ -524,12 +524,12 @@ func (I *Ingress) __chromedp_login() bool {
 			chromedp.WaitReady(`body`, chromedp.ByQuery),         // 等待HTML加载完成
 			chromedp.NodeIDs("body", &nodeIDs, chromedp.ByQuery), // 获取Body的NodeId
 			chromedp.Sleep(time.Duration(10) * time.Second),
-			chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+			chromedp.ActionFunc(func(ctxt context.Context) error {
 				if len(nodeIDs) != 1 {
 					return errors.New("Document loading error")
 				}
 				// 查询节点
-				passwordId, err := dom.QuerySelector(nodeIDs[0], `#profileIdentifier`).Do(ctxt, h)
+				passwordId, err := dom.QuerySelector(nodeIDs[0], `#profileIdentifier`).Do(ctxt)
 				if err != nil {
 					return err
 				}
@@ -537,14 +537,14 @@ func (I *Ingress) __chromedp_login() bool {
 				if passwordId > 0 {
 					// 需要登录
 					if err := chromedp.Run(ctxt, chromedp.Tasks{
-						chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+						chromedp.ActionFunc(func(ctxt context.Context) error {
 							log.Println("Entering password...")
 							return nil
 						}),
 						chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),                               // 随机延时
 						chromedp.WaitVisible(`#password input`, chromedp.ByQuery),                               // 等待输入框可见
 						chromedp.SendKeys(`#password input`, _password, chromedp.ByQuery, chromedp.NodeVisible), // 输入密码
-						chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+						chromedp.ActionFunc(func(ctxt context.Context) error {
 							log.Println("Going to the next step, ready to log in...")
 							return nil
 						}),
@@ -557,7 +557,7 @@ func (I *Ingress) __chromedp_login() bool {
 					}
 				} else {
 					// 查询节点
-					identifierId, err := dom.QuerySelector(nodeIDs[0], `#identifierId`).Do(ctxt, h)
+					identifierId, err := dom.QuerySelector(nodeIDs[0], `#identifierId`).Do(ctxt)
 					if err != nil {
 						return err
 					}
@@ -565,14 +565,14 @@ func (I *Ingress) __chromedp_login() bool {
 					if identifierId > 0 {
 						// 需要登录
 						if err := chromedp.Run(ctxt, chromedp.Tasks{
-							chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+							chromedp.ActionFunc(func(ctxt context.Context) error {
 								log.Println("Entering account...")
 								return nil
 							}),
 							chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),                  // 随机延时
 							chromedp.WaitVisible(`//*[@id="identifierId"]`),                            // 等待输入框可见
 							chromedp.SendKeys(`//*[@id="identifierId"]`, _email, chromedp.NodeVisible), // 输入账户
-							chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+							chromedp.ActionFunc(func(ctxt context.Context) error {
 								log.Println("Going to the next step, ready to enter your password...")
 								return nil
 							}),
@@ -580,14 +580,14 @@ func (I *Ingress) __chromedp_login() bool {
 							chromedp.WaitVisible(`//*[@id="identifierNext"]`),                 // 等待Next可见
 							chromedp.Click(`//*[@id="identifierNext"]`, chromedp.NodeVisible), // 点击下一步
 							chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),         // 随机延时
-							chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+							chromedp.ActionFunc(func(ctxt context.Context) error {
 								log.Println("Entering password...")
 								return nil
 							}),
 							chromedp.Sleep(time.Duration(rand.Intn(3)) * time.Second),                               // 随机延时
 							chromedp.WaitVisible(`#password input`, chromedp.ByQuery),                               // 等待输入框可见
 							chromedp.SendKeys(`#password input`, _password, chromedp.ByQuery, chromedp.NodeVisible), // 输入密码
-							chromedp.ActionFunc(func(ctxt context.Context, h cdp.Executor) error {
+							chromedp.ActionFunc(func(ctxt context.Context) error {
 								log.Println("Going to the next step, ready to log in...")
 								return nil
 							}),

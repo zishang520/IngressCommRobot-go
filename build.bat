@@ -1,53 +1,59 @@
 @echo OFF
-set GOPATH="%~dp0"
+set GOPATH="%~dp0vendor"
+rem Set the GOPROXY environment variable
+set GOPROXY=https://goproxy.io
 
 echo ========================
-echo build darwin_386/Ingress
+echo Require packge
+go mod tidy
+
+echo ========================
+echo build darwin_386_ingress
 set GOOS=darwin
 set GOARCH=386
-go build -ldflags "-s -w" -o bin/darwin_386/Ingress Ingress.go
+go build -ldflags "-s -w" -o bin/darwin_386_ingress Ingress.go
 
 echo ========================
-echo build darwin_amd64/Ingress
+echo build darwin_amd64_ingress
 set GOOS=darwin
 set GOARCH=amd64
-go build -ldflags "-s -w" -o bin/darwin_amd64/Ingress Ingress.go
+go build -ldflags "-s -w" -o bin/darwin_amd64_ingress Ingress.go
 
 echo ========================
-echo build linux_386/Ingress
+echo build linux_386_ingress
 set GOOS=linux
 set GOARCH=386
-go build -ldflags "-s -w" -o bin/linux_386/Ingress Ingress.go
+go build -ldflags "-s -w" -o bin/linux_386_ingress Ingress.go
 
 echo ========================
-echo build linux_amd64/Ingress
+echo build linux_amd64_ingress
 set GOOS=linux
 set GOARCH=amd64
-go build -ldflags "-s -w" -o bin/linux_amd64/Ingress Ingress.go
+go build -ldflags "-s -w" -o bin/linux_amd64_ingress Ingress.go
 
 echo ========================
-echo build linux_arm/Ingress
+echo build linux_arm_ingress
 set GOOS=linux
 set GOARCH=arm
-go build -ldflags "-s -w" -o bin/linux_arm/Ingress Ingress.go
+go build -ldflags "-s -w" -o bin/linux_arm_ingress Ingress.go
 
 echo ========================
-echo build linux_arm64/Ingress
+echo build linux_arm64_ingress
 set GOOS=linux
 set GOARCH=arm64
-go build -ldflags "-s -w" -o bin/linux_arm64/Ingress Ingress.go
+go build -ldflags "-s -w" -o bin/linux_arm64_ingress Ingress.go
 
 echo ========================
-echo build windows_386/Ingress.exe
+echo build windows_386_ingress.exe
 set GOOS=windows
 set GOARCH=386
-go build -ldflags "-s -w" -o bin/windows_386/Ingress.exe Ingress.go
+go build -ldflags "-s -w" -o bin/windows_386_ingress.exe Ingress.go
 
 echo ========================
-echo build windows_amd64/Ingress.exe
+echo build windows_amd64_ingress.exe
 set GOOS=windows
 set GOARCH=amd64
-go build -ldflags "-s -w" -o bin/windows_amd64/Ingress.exe Ingress.go
+go build -ldflags "-s -w" -o bin/windows_amd64_ingress.exe Ingress.go
 
 echo ========================
 echo Successful

@@ -3,11 +3,7 @@
 ### Tips:
 
 ```
-go get github.com/PuerkitoBio/goquery
-go get github.com/mattn/go-sqlite3
-go get github.com/zishang520/persistent-cookiejar
-go get golang.org/x/net/proxy
-go get github.com/chromedp/chromedp
+go mod vendor && go build Ingress.go
 ```
 If you are a windows user, you need to have Visual Studio and MinGW installed
 
@@ -39,3 +35,9 @@ Windows:
 ### Configuration Information:
 
 service/data/conf.json.default modify the configuration and renamed conf.json
+
+--/
+---Ingress
+---data/
+--------conf.json
+--------agent.db

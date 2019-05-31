@@ -1,14 +1,43 @@
 #!/usr/bin/env bash
-export GOPATH=`pwd`
-go get github.com/PuerkitoBio/goquery
-go get github.com/mattn/go-sqlite3
-go get github.com/zishang520/persistent-cookiejar
-go get golang.org/x/net/proxy
-GOOS=darwin GOARCH=386 go build -ldflags "-s -w" -o bin/darwin_386/Ingress Ingress.go
-GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w" -o bin/darwin_amd64/Ingress Ingress.go
-GOOS=linux GOARCH=386 go build -ldflags "-s -w" -o bin/linux_386/Ingress Ingress.go
-GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o bin/linux_amd64/Ingress Ingress.go
-GOOS=linux GOARCH=arm go build -ldflags "-s -w" -o bin/linux_arm/Ingress Ingress.go
-GOOS=linux GOARCH=arm64 go build -ldflags "-s -w" -o bin/linux_arm64/Ingress Ingress.go
-GOOS=windows GOARCH=386 go build -ldflags "-s -w" -o bin/windows_386/Ingress.exe Ingress.go
-GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o bin/windows_amd64/Ingress.exe Ingress.go
+export GOPATH="$(pwd)/vendor"
+# Set the GOPROXY environment variable
+export GOPROXY=https://goproxy.io
+echo ========================
+echo Require packge
+go mod tidy
+
+echo ========================
+echo build darwin_386_ingress
+GOOS=darwin GOARCH=386 go build -ldflags "-s -w" -o bin/darwin_386_ingress Ingress.go
+
+echo ========================
+echo build darwin_amd64_ingress
+GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w" -o bin/darwin_amd64_ingress Ingress.go
+
+echo ========================
+echo build linux_386_ingress
+GOOS=linux GOARCH=386 go build -ldflags "-s -w" -o bin/linux_386_ingress Ingress.go
+
+echo ========================
+echo build linux_amd64_ingress
+GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o bin/linux_amd64_ingress Ingress.go
+
+echo ========================
+echo build linux_arm_ingress
+GOOS=linux GOARCH=arm go build -ldflags "-s -w" -o bin/linux_arm_ingress Ingress.go
+
+echo ========================
+echo build linux_arm64_ingress
+GOOS=linux GOARCH=arm64 go build -ldflags "-s -w" -o bin/linux_arm64_ingress Ingress.go
+
+echo ========================
+echo build windows_386_ingress.exe
+GOOS=windows GOARCH=386 go build -ldflags "-s -w" -o bin/windows_386_ingress.exe Ingress.go
+
+echo ========================
+echo build windows_amd64_ingress.exe
+GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o bin/windows_amd64_ingress.exe Ingress.go
+
+echo ========================
+echo Successful
+echo ========================
