@@ -454,7 +454,7 @@ func (I *Ingress) __chromedp_login() bool {
 		}
 		var name string
 		if err := chromedp.Run(ctx, chromedp.Tasks{
-			chromedp.Text(`#player_stats > div.RESISTANCE > div.player_nickname`, &name, chromedp.ByQuery, chromedp.NodeVisible), // 等待是否需要登录 30s 超时
+			chromedp.Text(`#player_stats > div > div.player_nickname`, &name, chromedp.ByQuery, chromedp.NodeVisible), // 等待是否需要登录 30s 超时
 			// chromedp.Text(`//*[@id="header_email"]`, &name, chromedp.NodeVisible), // 等待是否需要登录 30s 超时
 		}); err != nil {
 			// if err == context.Canceled {
@@ -754,11 +754,7 @@ func (I *Ingress) __regexp() string {
 
 func (I *Ingress) __rand_msg() string {
 	data := []interface{}{
-		" 欢迎新人，快来加入川渝蓝军群(群号126821831)，发现精彩内容。",
-		" 欢迎选择加入抵抗军·川渝蓝军群(群号126821831)，一起为建设社会主义社会、实现人类的全面自由发展而奋斗吧。",
-		" 您已进入秋名山路段，此处常有老司机出没，加入川渝蓝军群(群号126821831)，寻找这里的老司机吧。",
-		" 欢迎加入熊猫抵抗军(群号126821831)，感谢你在与shapers的斗争中选择了人性与救赎，选择与死磕并肩同行。新人你好，我是死磕。",
-		" ingrees亚洲 中国分区 川渝地区组织需要你！快来加入川渝蓝军群(群号126821831)。",
+		" 你好呀，萌新",
 	}
 	rand.Seed(time.Now().UnixNano())
 	if I.Config.Has("rand_msg") && len(I.Config.Get("rand_msg").([]interface{})) > 0 {
